@@ -32,9 +32,12 @@ import (
 )
 
 const (
-	seedName            = "seed"
-	gardenNamespaceName = "garden"
-	testNamespaceName   = "test"
+	seedName                   = "seed"
+	gardenNamespaceName        = "garden"
+	testNamespaceName          = "test"
+	bucketName                 = "test-bucket"
+	backupEntryName            = "shoot-foo-bar--test-backup-entry"
+	shootControlPlaneNamespace = "shoot-foo-bar"
 )
 
 var _ = Describe("Controller", func() {
@@ -53,6 +56,9 @@ var _ = Describe("Controller", func() {
 		backupEntry          *gardencorev1beta1.BackupEntry
 		extensionBackupEntry *extensionsv1alpha1.BackupEntry
 		extensionSecret      *corev1.Secret
+		etcdBackupSecret     *corev1.Secret
+		etcdBackupSecretKey  client.ObjectKey
+		etcdBackupSecretData map[string][]byte
 		providerConfig       = &runtime.RawExtension{Raw: []byte(`{"dash":"baz"}`)}
 		providerStatus       = &runtime.RawExtension{Raw: []byte(`{"foo":"bar"}`)}
 		now                  time.Time
@@ -108,7 +114,7 @@ var _ = Describe("Controller", func() {
 
 		backupEntry = &gardencorev1beta1.BackupEntry{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "bar",
+				Name:      backupEntryName,
 				Namespace: testNamespaceName,
 			},
 			Spec: gardencorev1beta1.BackupEntrySpec{
@@ -185,6 +191,21 @@ var _ = Describe("Controller", func() {
 				Namespace: backupEntry.Namespace,
 			},
 		}
+
+		etcdBackupSecretData = map[string][]byte{
+			"bucketName": []byte(bucketName),
+			"foo":        []byte("bar"),
+		}
+
+		etcdBackupSecret = &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "etcd-backup",
+				Namespace: shootControlPlaneNamespace,
+			},
+			Data: etcdBackupSecretData,
+		}
+
+		etcdBackupSecretKey = client.ObjectKey{Namespace: shootControlPlaneNamespace, Name: "etcd-backup"}
 	})
 
 	Describe("#Invalid Credentials", func() {
@@ -264,9 +285,10 @@ var _ = Describe("Controller", func() {
 			}))
 		})
 
-		It("should not reconcile the extension BackupEntry if the secret data or extension spec hasn't changed", func() {
+		It("should not reconcile the extension BackupEntry if the secret data or extension spec hasn't changed and the etcd-backup secret exists", func() {
 			Expect(seedClient.Create(ctx, extensionSecret)).To(Succeed())
 			Expect(seedClient.Create(ctx, extensionBackupEntry)).To(Succeed())
+			Expect(seedClient.Create(ctx, etcdBackupSecret)).To(Succeed())
 
 			result, err := reconciler.Reconcile(ctx, request)
 			Expect(err).NotTo(HaveOccurred())
@@ -319,6 +341,19 @@ var _ = Describe("Controller", func() {
 
 			Expect(seedClient.Get(ctx, client.ObjectKeyFromObject(extensionBackupEntry), extensionBackupEntry)).To(Succeed())
 			Expect(extensionBackupEntry.Annotations).To(HaveKeyWithValue(v1beta1constants.GardenerOperation, v1beta1constants.GardenerOperationReconcile))
+		})
+
+		It("should reconcile the extension BackupEntry if the etcd-backup secret doesn't exist even if if the secret data or extension spec haven't changed", func() {
+			Expect(seedClient.Create(ctx, extensionSecret)).To(Succeed())
+			Expect(seedClient.Create(ctx, extensionBackupEntry)).To(Succeed())
+			Expect(seedClient.Get(ctx, etcdBackupSecretKey, etcdBackupSecret)).To(BeNotFoundError())
+
+			result, err := reconciler.Reconcile(ctx, request)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(reconcile.Result{}))
+
+			Expect(seedClient.Get(ctx, client.ObjectKeyFromObject(extensionBackupEntry), extensionBackupEntry)).To(Succeed())
+			Expect(extensionBackupEntry.Annotations).To(HaveKey(v1beta1constants.GardenerOperation))
 		})
 
 		It("should use the backupBucket.status.generatedSecret as credentials", func() {

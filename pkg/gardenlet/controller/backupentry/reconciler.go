@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -255,6 +256,18 @@ func (r *Reconciler) reconcileBackupEntry(
 				lastObservedError = v1beta1helper.NewErrorWithCodes(fmt.Errorf("error during reconciliation: %s", extensionBackupEntry.Status.LastError.Description), extensionBackupEntry.Status.LastError.Codes...)
 			}
 		}
+	}
+
+	// reconcile extensionBackupEntry if the etcd-backup secret does not exist in the Shoot's control plane namespace
+	shootControlPlaneNamespace, _ := gardenerutils.ExtractShootDetailsFromBackupEntryName(backupEntry.Name)
+	etcdBackupSecretName := v1beta1constants.BackupSecretName
+	if strings.HasPrefix(backupEntry.Name, v1beta1constants.BackupSourcePrefix) {
+		etcdBackupSecretName = fmt.Sprintf("%s-%s", v1beta1constants.BackupSourcePrefix, v1beta1constants.BackupSecretName)
+	}
+	if err := r.SeedClient.Get(seedCtx, client.ObjectKey{Namespace: shootControlPlaneNamespace, Name: etcdBackupSecretName}, &corev1.Secret{}); apierrors.IsNotFound(err) {
+		mustReconcileExtensionBackupEntry = true
+	} else if err != nil {
+		return err
 	}
 
 	if lastObservedError != nil {
