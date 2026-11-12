@@ -18,6 +18,9 @@ import (
 	. "github.com/onsi/gomega/gstruct"
 	"github.com/onsi/gomega/types"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	"google.golang.org/protobuf/types/known/durationpb"
+	istioapinetworkingv1beta1 "istio.io/api/networking/v1beta1"
+	istionetworkingv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -136,6 +139,8 @@ var _ = Describe("KubeAPIServer", func() {
 		podDisruptionBudget            *policyv1.PodDisruptionBudget
 		serviceMonitor                 *monitoringv1.ServiceMonitor
 		prometheusRule                 *monitoringv1.PrometheusRule
+		destinationRule                *istionetworkingv1beta1.DestinationRule
+		virtualService                 *istionetworkingv1beta1.VirtualService
 		configMapAdmission             *corev1.ConfigMap
 		secretAdmissionKubeconfigs     *corev1.Secret
 		configMapAuditPolicy           *corev1.ConfigMap
@@ -215,6 +220,18 @@ var _ = Describe("KubeAPIServer", func() {
 		}
 		prometheusRule = &monitoringv1.PrometheusRule{
 			ObjectMeta: metav1.ObjectMeta{
+				Namespace: namespace,
+			},
+		}
+		destinationRule = &istionetworkingv1beta1.DestinationRule{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      namePrefix + "kube-apiserver-mesh",
+				Namespace: namespace,
+			},
+		}
+		virtualService = &istionetworkingv1beta1.VirtualService{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      namePrefix + "kube-apiserver-mesh",
 				Namespace: namespace,
 			},
 		}
@@ -812,6 +829,121 @@ var _ = Describe("KubeAPIServer", func() {
 					Expect(prometheusRule).To(DeepEqual(expectedPrometheusRule))
 
 					componenttest.PrometheusRule(prometheusRule, "testdata/shoot-kube-apiserver.prometheusrule.test.yaml")
+				})
+			})
+		})
+
+		Describe("Istio Resources", func() {
+			var (
+				expectedDestinationRule *istionetworkingv1beta1.DestinationRule
+				expectedVirtualService  *istionetworkingv1beta1.VirtualService
+			)
+
+			JustBeforeEach(func() {
+				serviceName := namePrefix + "kube-apiserver"
+				host := serviceName + "." + namespace + ".svc.cluster.local"
+
+				expectedDestinationRule = &istionetworkingv1beta1.DestinationRule{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            serviceName + "-mesh",
+						Namespace:       namespace,
+						ResourceVersion: "1",
+						Labels: map[string]string{
+							"app":  "kubernetes",
+							"role": "apiserver",
+						},
+					},
+					Spec: istioapinetworkingv1beta1.DestinationRule{
+						ExportTo: []string{"."},
+						Host:     host,
+						TrafficPolicy: &istioapinetworkingv1beta1.TrafficPolicy{
+							LoadBalancer: &istioapinetworkingv1beta1.LoadBalancerSettings{
+								LbPolicy: &istioapinetworkingv1beta1.LoadBalancerSettings_Simple{
+									Simple: istioapinetworkingv1beta1.LoadBalancerSettings_LEAST_REQUEST,
+								},
+							},
+							Tls: &istioapinetworkingv1beta1.ClientTLSSettings{
+								Mode: istioapinetworkingv1beta1.ClientTLSSettings_DISABLE,
+							},
+							ConnectionPool: &istioapinetworkingv1beta1.ConnectionPoolSettings{
+								Tcp: &istioapinetworkingv1beta1.ConnectionPoolSettings_TCPSettings{
+									MaxConnections: 1024,
+									TcpKeepalive: &istioapinetworkingv1beta1.ConnectionPoolSettings_TCPSettings_TcpKeepalive{
+										Time:     &durationpb.Duration{Seconds: 30},
+										Interval: &durationpb.Duration{Seconds: 10},
+										Probes:   3,
+									},
+								},
+							},
+						},
+					},
+				}
+
+				expectedVirtualService = &istionetworkingv1beta1.VirtualService{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:            serviceName + "-mesh",
+						Namespace:       namespace,
+						ResourceVersion: "1",
+						Labels: map[string]string{
+							"app":  "kubernetes",
+							"role": "apiserver",
+						},
+					},
+					Spec: istioapinetworkingv1beta1.VirtualService{
+						ExportTo: []string{"."},
+						Hosts: []string{
+							host,
+							serviceName,
+						},
+						Tls: []*istioapinetworkingv1beta1.TLSRoute{{
+							Match: []*istioapinetworkingv1beta1.TLSMatchAttributes{{
+								Port: 443,
+								SniHosts: []string{
+									serviceName,
+									host,
+								},
+							}},
+							Route: []*istioapinetworkingv1beta1.RouteDestination{{
+								Destination: &istioapinetworkingv1beta1.Destination{
+									Host: host,
+									Port: &istioapinetworkingv1beta1.PortSelector{
+										Number: 443,
+									},
+								},
+							}},
+						}},
+					},
+				}
+			})
+
+			When("name prefix is provided (virtual garden)", func() {
+				BeforeEach(func() {
+					namePrefix = "virtual-garden-"
+				})
+
+				It("should successfully deploy the DestinationRule and VirtualService", func() {
+					Expect(c.Get(ctx, client.ObjectKeyFromObject(expectedDestinationRule), destinationRule)).To(BeNotFoundError())
+					Expect(c.Get(ctx, client.ObjectKeyFromObject(expectedVirtualService), virtualService)).To(BeNotFoundError())
+
+					Expect(kapi.Deploy(ctx)).To(Succeed())
+
+					Expect(c.Get(ctx, client.ObjectKeyFromObject(expectedDestinationRule), destinationRule)).To(Succeed())
+					Expect(destinationRule).To(BeComparableTo(expectedDestinationRule, componenttest.CmpOptsForDestinationRule()))
+
+					Expect(c.Get(ctx, client.ObjectKeyFromObject(expectedVirtualService), virtualService)).To(Succeed())
+					Expect(virtualService).To(BeComparableTo(expectedVirtualService, componenttest.CmpOptsForVirtualService()))
+				})
+			})
+
+			When("name prefix is not provided (shoot)", func() {
+				It("should not deploy the DestinationRule and VirtualService", func() {
+					Expect(c.Get(ctx, client.ObjectKeyFromObject(expectedDestinationRule), destinationRule)).To(BeNotFoundError())
+					Expect(c.Get(ctx, client.ObjectKeyFromObject(expectedVirtualService), virtualService)).To(BeNotFoundError())
+
+					Expect(kapi.Deploy(ctx)).To(Succeed())
+
+					Expect(c.Get(ctx, client.ObjectKeyFromObject(expectedDestinationRule), destinationRule)).To(BeNotFoundError())
+					Expect(c.Get(ctx, client.ObjectKeyFromObject(expectedVirtualService), virtualService)).To(BeNotFoundError())
 				})
 			})
 		})
@@ -2613,8 +2745,8 @@ kind: AuthorizationConfiguration
 					deployAndRead()
 
 					expectedLabels := utils.MergeStringMaps(defaultLabels, map[string]string{
-						"sidecar.istio.io/inject":                                                            "true",
-						"networking.resources.gardener.cloud/to-istio-system-istiod-tcp-15012":               "allowed",
+						"sidecar.istio.io/inject": "true",
+						"networking.resources.gardener.cloud/to-istio-system-istiod-tcp-15012":              "allowed",
 						"networking.resources.gardener.cloud/to-virtual-garden-etcd-main-client-tcp-2379":   "allowed",
 						"networking.resources.gardener.cloud/to-virtual-garden-etcd-events-client-tcp-2379": "allowed",
 					})
@@ -4465,14 +4597,20 @@ anonymous:
 		It("should delete all the resources successfully", func() {
 			Expect(c.Create(ctx, horizontalPodAutoscaler)).To(Succeed())
 			Expect(c.Create(ctx, podDisruptionBudget)).To(Succeed())
+			Expect(c.Create(ctx, destinationRule)).To(Succeed())
+			Expect(c.Create(ctx, virtualService)).To(Succeed())
 
 			Expect(c.Get(ctx, client.ObjectKeyFromObject(horizontalPodAutoscaler), horizontalPodAutoscaler)).To(Succeed())
 			Expect(c.Get(ctx, client.ObjectKeyFromObject(podDisruptionBudget), podDisruptionBudget)).To(Succeed())
+			Expect(c.Get(ctx, client.ObjectKeyFromObject(destinationRule), destinationRule)).To(Succeed())
+			Expect(c.Get(ctx, client.ObjectKeyFromObject(virtualService), virtualService)).To(Succeed())
 
 			Expect(kapi.Destroy(ctx)).To(Succeed())
 
 			Expect(c.Get(ctx, client.ObjectKeyFromObject(horizontalPodAutoscaler), horizontalPodAutoscaler)).To(BeNotFoundError())
 			Expect(c.Get(ctx, client.ObjectKeyFromObject(podDisruptionBudget), podDisruptionBudget)).To(BeNotFoundError())
+			Expect(c.Get(ctx, client.ObjectKeyFromObject(destinationRule), destinationRule)).To(BeNotFoundError())
+			Expect(c.Get(ctx, client.ObjectKeyFromObject(virtualService), virtualService)).To(BeNotFoundError())
 		})
 	})
 

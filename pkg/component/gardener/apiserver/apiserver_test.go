@@ -13,6 +13,9 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/types"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	"google.golang.org/protobuf/types/known/durationpb"
+	istioapinetworkingv1beta1 "istio.io/api/networking/v1beta1"
+	istionetworkingv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -33,6 +36,7 @@ import (
 	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 	"github.com/gardener/gardener/pkg/component/apiserver"
 	. "github.com/gardener/gardener/pkg/component/gardener/apiserver"
+	comptest "github.com/gardener/gardener/pkg/component/test"
 	operatorclient "github.com/gardener/gardener/pkg/operator/client"
 	"github.com/gardener/gardener/pkg/resourcemanager/controller/garbagecollector/references"
 	"github.com/gardener/gardener/pkg/utils/gardener"
@@ -111,6 +115,8 @@ var _ = Describe("GardenerAPIServer", func() {
 		clusterRoleBindingAuthDelegation *rbacv1.ClusterRoleBinding
 		roleBindingAuthReader            *rbacv1.RoleBinding
 		serviceMonitor                   *monitoringv1.ServiceMonitor
+		destinationRule                  *istionetworkingv1beta1.DestinationRule
+		virtualService                   *istionetworkingv1beta1.VirtualService
 	)
 
 	BeforeEach(func() {
@@ -148,7 +154,7 @@ var _ = Describe("GardenerAPIServer", func() {
 			TargetVersion:                     semver.MustParse("1.33.1"),
 		}
 		deployer = New(fakeClient, fakeAPIReader, namespace, fakeSecretManager, values)
-		consistOf = NewManagedResourceConsistOfObjectsMatcher(fakeClient)
+		consistOf = NewManagedResourceConsistOfObjectsMatcher(fakeClient, comptest.CmpOptsForIstio()...)
 
 		fakeOps = &retryfake.Ops{MaxAttempts: 2}
 		DeferCleanup(test.WithVars(
@@ -205,7 +211,7 @@ var _ = Describe("GardenerAPIServer", func() {
 				Name:      "gardener-apiserver",
 				Namespace: namespace,
 				Annotations: map[string]string{
-					"networking.istio.io/exportTo":                                                     ".",
+					"networking.istio.io/exportTo": ".",
 					"networking.resources.gardener.cloud/from-all-webhook-targets-allowed-ports":       `[{"protocol":"TCP","port":8443}]`,
 					"networking.resources.gardener.cloud/from-all-garden-scrape-targets-allowed-ports": `[{"protocol":"TCP","port":8443}]`,
 				},
@@ -699,6 +705,72 @@ var _ = Describe("GardenerAPIServer", func() {
 						SourceLabels: []monitoringv1.LabelName{"__name__"},
 						Action:       "keep",
 						Regex:        `^(authentication_attempts|authenticated_user_requests|apiserver_admission_controller_admission_duration_seconds_.+|apiserver_admission_webhook_admission_duration_seconds_.+|apiserver_admission_step_admission_duration_seconds_.+|apiserver_admission_webhook_rejection_count|apiserver_audit_event_total|apiserver_audit_error_total|apiserver_audit_requests_rejected_total|apiserver_request_total|apiserver_storage_objects|apiserver_latency_seconds|apiserver_current_inflight_requests|apiserver_current_inqueue_requests|apiserver_response_sizes_.+|apiserver_request_duration_seconds_.+|apiserver_request_terminations_total|apiserver_storage_transformation_duration_seconds_.+|apiserver_storage_transformation_operations_total|apiserver_registered_watchers|apiserver_init_events_total|apiserver_watch_events_sizes_.+|apiserver_watch_events_total|etcd_request_duration_seconds_.+|watch_cache_capacity_increase_total|watch_cache_capacity_decrease_total|watch_cache_capacity|go_.+|apiserver_cache_list_.+|apiserver_storage_list_.+)$`,
+					}},
+				}},
+			},
+		}
+		destinationRule = &istionetworkingv1beta1.DestinationRule{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "gardener-apiserver",
+				Namespace: namespace,
+				Labels: map[string]string{
+					"app":  "gardener",
+					"role": "apiserver",
+				},
+			},
+			Spec: istioapinetworkingv1beta1.DestinationRule{
+				Host: "gardener-apiserver." + namespace + ".svc.cluster.local",
+				TrafficPolicy: &istioapinetworkingv1beta1.TrafficPolicy{
+					LoadBalancer: &istioapinetworkingv1beta1.LoadBalancerSettings{
+						LbPolicy: &istioapinetworkingv1beta1.LoadBalancerSettings_Simple{
+							Simple: istioapinetworkingv1beta1.LoadBalancerSettings_LEAST_REQUEST,
+						},
+					},
+					Tls: &istioapinetworkingv1beta1.ClientTLSSettings{
+						Mode: istioapinetworkingv1beta1.ClientTLSSettings_DISABLE,
+					},
+					ConnectionPool: &istioapinetworkingv1beta1.ConnectionPoolSettings{
+						Tcp: &istioapinetworkingv1beta1.ConnectionPoolSettings_TCPSettings{
+							MaxConnections: 1024,
+							TcpKeepalive: &istioapinetworkingv1beta1.ConnectionPoolSettings_TCPSettings_TcpKeepalive{
+								Time:     &durationpb.Duration{Seconds: 30},
+								Interval: &durationpb.Duration{Seconds: 10},
+								Probes:   3,
+							},
+						},
+					},
+				},
+			},
+		}
+		virtualService = &istionetworkingv1beta1.VirtualService{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "gardener-apiserver",
+				Namespace: namespace,
+				Labels: map[string]string{
+					"app":  "gardener",
+					"role": "apiserver",
+				},
+			},
+			Spec: istioapinetworkingv1beta1.VirtualService{
+				Hosts: []string{
+					"gardener-apiserver." + namespace + ".svc.cluster.local",
+					"gardener-apiserver",
+				},
+				Tls: []*istioapinetworkingv1beta1.TLSRoute{{
+					Match: []*istioapinetworkingv1beta1.TLSMatchAttributes{{
+						Port: 443,
+						SniHosts: []string{
+							"gardener-apiserver",
+							"gardener-apiserver." + namespace + ".svc.cluster.local",
+						},
+					}},
+					Route: []*istioapinetworkingv1beta1.RouteDestination{{
+						Destination: &istioapinetworkingv1beta1.Destination{
+							Host: "gardener-apiserver." + namespace + ".svc.cluster.local",
+							Port: &istioapinetworkingv1beta1.PortSelector{
+								Number: 443,
+							},
+						},
 					}},
 				}},
 			},
@@ -1392,7 +1464,7 @@ kubeConfigFile: /etc/kubernetes/admission-kubeconfigs/validatingadmissionwebhook
 					managedResourceSecretVirtual.Name = managedResourceVirtual.Spec.SecretRefs[0].Name
 					Expect(fakeClient.Get(ctx, client.ObjectKeyFromObject(managedResourceSecretVirtual), managedResourceSecretVirtual)).To(Succeed())
 
-					expectedRuntimeObjects = []client.Object{deployment, serviceMonitor, vpa, podDisruptionBudget}
+					expectedRuntimeObjects = []client.Object{deployment, serviceMonitor, vpa, podDisruptionBudget, destinationRule, virtualService}
 					Expect(managedResourceSecretRuntime.Type).To(Equal(corev1.SecretTypeOpaque))
 					Expect(managedResourceSecretRuntime.Immutable).To(Equal(new(true)))
 					Expect(managedResourceSecretRuntime.Labels["resources.gardener.cloud/garbage-collectable-reference"]).To(Equal("true"))

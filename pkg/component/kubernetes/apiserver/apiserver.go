@@ -476,6 +476,13 @@ func (k *kubeAPIServer) Deploy(ctx context.Context) error {
 		if err := k.reconcilePrometheusRule(ctx, k.emptyPrometheusRule()); err != nil {
 			return err
 		}
+	} else {
+		if err := k.reconcileDestinationRule(ctx, k.emptyDestinationRule()); err != nil {
+			return err
+		}
+		if err := k.reconcileVirtualService(ctx, k.emptyVirtualService()); err != nil {
+			return err
+		}
 	}
 
 	if !k.values.IsWorkerless {
@@ -502,6 +509,8 @@ func (k *kubeAPIServer) Destroy(ctx context.Context) error {
 		k.emptyRoleBindingHAVPN(),
 		k.emptyServiceMonitor(),
 		k.emptyPrometheusRule(),
+		k.emptyDestinationRule(),
+		k.emptyVirtualService(),
 	)
 }
 

@@ -11,12 +11,14 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	kubernetesscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	operatorv1alpha1 "github.com/gardener/gardener/pkg/apis/operator/v1alpha1"
+	"github.com/gardener/gardener/pkg/client/kubernetes"
 	fakekubernetes "github.com/gardener/gardener/pkg/client/kubernetes/fake"
+	operatorclient "github.com/gardener/gardener/pkg/operator/client"
 	gardenerutils "github.com/gardener/gardener/pkg/utils/gardener"
 	secretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager"
 	fakesecretsmanager "github.com/gardener/gardener/pkg/utils/secrets/manager/fake"
@@ -33,7 +35,7 @@ var _ = Describe("Reconciler", func() {
 	)
 
 	BeforeEach(func() {
-		runtimeClient = fakeclient.NewClientBuilder().WithScheme(kubernetesscheme.Scheme).Build()
+		runtimeClient = fakeclient.NewClientBuilder().WithScheme(operatorclient.RuntimeScheme).Build()
 		sm = fakesecretsmanager.New(runtimeClient, gardenNamespace)
 
 		reconciler = &Reconciler{
@@ -155,6 +157,41 @@ var _ = Describe("Reconciler", func() {
 			Expect(secret.Name).To(HavePrefix("global-" + v1beta1constants.SecretNameObservabilityIngress + "-"))
 
 			Expect(runtimeClient.Get(ctx, client.ObjectKeyFromObject(seedReplica), &corev1.Secret{})).To(Succeed())
+		})
+	})
+
+	Describe("#generateGenericTokenKubeconfig", func() {
+		It("should generate generic token kubeconfig pointing to the in-cluster virtual-garden-kube-apiserver service", func() {
+			Expect(runtimeClient.Create(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      v1beta1constants.SecretNameCACluster,
+					Namespace: gardenNamespace,
+				},
+				Data: map[string][]byte{"bundle.crt": []byte("ca-bundle")},
+			})).To(Succeed())
+
+			garden := &operatorv1alpha1.Garden{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "local",
+				},
+				Spec: operatorv1alpha1.GardenSpec{
+					VirtualCluster: operatorv1alpha1.VirtualCluster{
+						DNS: operatorv1alpha1.DNS{
+							Domains: []operatorv1alpha1.DNSDomain{{Name: "virtual-garden.local.gardener.cloud"}},
+						},
+					},
+				},
+			}
+			Expect(runtimeClient.Create(ctx, garden)).To(Succeed())
+
+			Expect(reconciler.generateGenericTokenKubeconfig(ctx, garden, sm)).To(Succeed())
+
+			secretName := garden.Annotations[v1beta1constants.AnnotationKeyGenericTokenKubeconfigSecretName]
+			Expect(secretName).NotTo(BeEmpty())
+
+			secret := &corev1.Secret{}
+			Expect(runtimeClient.Get(ctx, client.ObjectKey{Namespace: gardenNamespace, Name: secretName}, secret)).To(Succeed())
+			Expect(string(secret.Data[kubernetes.KubeConfig])).To(ContainSubstring("server: https://" + operatorv1alpha1.DeploymentNameVirtualGardenKubeAPIServer))
 		})
 	})
 })

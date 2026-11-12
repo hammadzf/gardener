@@ -193,6 +193,8 @@ func (g *gardenerAPIServer) Deploy(ctx context.Context) error {
 		g.verticalPodAutoscaler(),
 		g.deployment(secretCAETCD, secretETCDClient, secretGenericTokenKubeconfig, secretServer, secretAdmissionKubeconfigs, secretETCDEncryptionConfiguration, secretAuditWebhookKubeconfig, secretWorkloadIdentityKey, secretVirtualGardenAccess, configMapAuditPolicy, configMapAdmissionConfigs),
 		g.serviceMonitor(),
+		g.destinationRule(),
+		g.virtualService(),
 	)
 	if err != nil {
 		return err
