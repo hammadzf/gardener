@@ -1,5 +1,6 @@
 trustDomain: cluster.local
 image: to-be-injected-by-imagevector
+proxyImage: to-be-injected-by-imagevector
 labels:
   app: istiod
   istio: pilot

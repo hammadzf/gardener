@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	batchv1beta1 "k8s.io/api/batch/v1beta1"
 	corev1 "k8s.io/api/core/v1"
@@ -120,6 +121,10 @@ func merge(origin string, desired, current *unstructured.Unstructured, forceOver
 		return mergeService(scheme.Scheme, oldObject, newObject)
 	case corev1.SchemeGroupVersion.WithKind("ServiceAccount").GroupKind():
 		return mergeServiceAccount(scheme.Scheme, oldObject, newObject)
+	case admissionregistrationv1.SchemeGroupVersion.WithKind("MutatingWebhookConfiguration").GroupKind():
+		return mergeMutatingWebhookConfiguration(scheme.Scheme, oldObject, newObject)
+	case admissionregistrationv1.SchemeGroupVersion.WithKind("ValidatingWebhookConfiguration").GroupKind():
+		return mergeValidatingWebhookConfiguration(scheme.Scheme, oldObject, newObject)
 	}
 
 	return nil
@@ -408,6 +413,70 @@ func mergeServiceAccount(scheme *runtime.Scheme, oldObj, newObj runtime.Object) 
 	newServiceAccount.ImagePullSecrets = oldServiceAccount.ImagePullSecrets
 
 	return scheme.Convert(newServiceAccount, newObj, nil)
+}
+
+func mergeMutatingWebhookConfiguration(scheme *runtime.Scheme, oldObj, newObj runtime.Object) error {
+	oldConfig := &admissionregistrationv1.MutatingWebhookConfiguration{}
+	if err := scheme.Convert(oldObj, oldConfig, nil); err != nil {
+		return err
+	}
+
+	newConfig := &admissionregistrationv1.MutatingWebhookConfiguration{}
+	if err := scheme.Convert(newObj, newConfig, nil); err != nil {
+		return err
+	}
+
+	oldWebhooks := make(map[string]admissionregistrationv1.MutatingWebhook, len(oldConfig.Webhooks))
+	for _, w := range oldConfig.Webhooks {
+		oldWebhooks[w.Name] = w
+	}
+
+	for i, w := range newConfig.Webhooks {
+		if oldWebhook, ok := oldWebhooks[w.Name]; ok {
+			if len(w.ClientConfig.CABundle) == 0 && len(oldWebhook.ClientConfig.CABundle) > 0 {
+				newConfig.Webhooks[i].ClientConfig.CABundle = oldWebhook.ClientConfig.CABundle
+			}
+			// Preserve FailurePolicy if it was updated at runtime (e.g. by istiod patching Ignore -> Fail once ready)
+			if len(oldWebhook.ClientConfig.CABundle) > 0 && oldWebhook.FailurePolicy != nil &&
+				w.FailurePolicy != nil && *w.FailurePolicy == admissionregistrationv1.Ignore {
+				newConfig.Webhooks[i].FailurePolicy = oldWebhook.FailurePolicy
+			}
+		}
+	}
+
+	return scheme.Convert(newConfig, newObj, nil)
+}
+
+func mergeValidatingWebhookConfiguration(scheme *runtime.Scheme, oldObj, newObj runtime.Object) error {
+	oldConfig := &admissionregistrationv1.ValidatingWebhookConfiguration{}
+	if err := scheme.Convert(oldObj, oldConfig, nil); err != nil {
+		return err
+	}
+
+	newConfig := &admissionregistrationv1.ValidatingWebhookConfiguration{}
+	if err := scheme.Convert(newObj, newConfig, nil); err != nil {
+		return err
+	}
+
+	oldWebhooks := make(map[string]admissionregistrationv1.ValidatingWebhook, len(oldConfig.Webhooks))
+	for _, w := range oldConfig.Webhooks {
+		oldWebhooks[w.Name] = w
+	}
+
+	for i, w := range newConfig.Webhooks {
+		if oldWebhook, ok := oldWebhooks[w.Name]; ok {
+			if len(w.ClientConfig.CABundle) == 0 && len(oldWebhook.ClientConfig.CABundle) > 0 {
+				newConfig.Webhooks[i].ClientConfig.CABundle = oldWebhook.ClientConfig.CABundle
+			}
+			// Preserve FailurePolicy if it was updated at runtime (e.g. by istiod patching Ignore -> Fail once ready)
+			if len(oldWebhook.ClientConfig.CABundle) > 0 && oldWebhook.FailurePolicy != nil &&
+				w.FailurePolicy != nil && *w.FailurePolicy == admissionregistrationv1.Ignore {
+				newConfig.Webhooks[i].FailurePolicy = oldWebhook.FailurePolicy
+			}
+		}
+	}
+
+	return scheme.Convert(newConfig, newObj, nil)
 }
 
 // mergeMapsBasedOnOldMap merges the values of the desired map into the current map.

@@ -9,6 +9,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	batchv1beta1 "k8s.io/api/batch/v1beta1"
@@ -1150,6 +1151,118 @@ var _ = Describe("merger", func() {
 				expected = newService.DeepCopy()
 			}),
 		)
+	})
+
+	Describe("#mergeMutatingWebhookConfiguration", func() {
+		var (
+			old, newWebhook *admissionregistrationv1.MutatingWebhookConfiguration
+			s               *runtime.Scheme
+		)
+
+		BeforeEach(func() {
+			s = runtime.NewScheme()
+			Expect(admissionregistrationv1.AddToScheme(s)).ToNot(HaveOccurred(), "schema add should succeed")
+
+			old = &admissionregistrationv1.MutatingWebhookConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-webhook",
+				},
+				Webhooks: []admissionregistrationv1.MutatingWebhook{
+					{
+						Name: "hook1.example.com",
+						ClientConfig: admissionregistrationv1.WebhookClientConfig{
+							CABundle: []byte("old-ca-bundle"),
+						},
+					},
+				},
+			}
+
+			newWebhook = old.DeepCopy()
+			newWebhook.Webhooks[0].ClientConfig.CABundle = nil
+		})
+
+		It("should preserve caBundle when new webhook has empty caBundle", func() {
+			expected := old.DeepCopy()
+
+			Expect(mergeMutatingWebhookConfiguration(s, old, newWebhook)).NotTo(HaveOccurred(), "merge should be successful")
+			Expect(newWebhook).To(Equal(expected))
+		})
+
+		It("should not overwrite caBundle when new webhook has caBundle set", func() {
+			newWebhook.Webhooks[0].ClientConfig.CABundle = []byte("new-ca-bundle")
+			expected := newWebhook.DeepCopy()
+
+			Expect(mergeMutatingWebhookConfiguration(s, old, newWebhook)).NotTo(HaveOccurred(), "merge should be successful")
+			Expect(newWebhook).To(Equal(expected))
+		})
+
+		It("should preserve runtime failurePolicy when caBundle is populated and desired failurePolicy is Ignore", func() {
+			failPolicy := admissionregistrationv1.Fail
+			ignorePolicy := admissionregistrationv1.Ignore
+			old.Webhooks[0].FailurePolicy = &failPolicy
+			newWebhook.Webhooks[0].FailurePolicy = &ignorePolicy
+
+			expected := old.DeepCopy()
+
+			Expect(mergeMutatingWebhookConfiguration(s, old, newWebhook)).NotTo(HaveOccurred(), "merge should be successful")
+			Expect(newWebhook).To(Equal(expected))
+		})
+	})
+
+	Describe("#mergeValidatingWebhookConfiguration", func() {
+		var (
+			old, newWebhook *admissionregistrationv1.ValidatingWebhookConfiguration
+			s               *runtime.Scheme
+		)
+
+		BeforeEach(func() {
+			s = runtime.NewScheme()
+			Expect(admissionregistrationv1.AddToScheme(s)).ToNot(HaveOccurred(), "schema add should succeed")
+
+			old = &admissionregistrationv1.ValidatingWebhookConfiguration{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-webhook",
+				},
+				Webhooks: []admissionregistrationv1.ValidatingWebhook{
+					{
+						Name: "hook1.example.com",
+						ClientConfig: admissionregistrationv1.WebhookClientConfig{
+							CABundle: []byte("old-ca-bundle"),
+						},
+					},
+				},
+			}
+
+			newWebhook = old.DeepCopy()
+			newWebhook.Webhooks[0].ClientConfig.CABundle = nil
+		})
+
+		It("should preserve caBundle when new webhook has empty caBundle", func() {
+			expected := old.DeepCopy()
+
+			Expect(mergeValidatingWebhookConfiguration(s, old, newWebhook)).NotTo(HaveOccurred(), "merge should be successful")
+			Expect(newWebhook).To(Equal(expected))
+		})
+
+		It("should not overwrite caBundle when new webhook has caBundle set", func() {
+			newWebhook.Webhooks[0].ClientConfig.CABundle = []byte("new-ca-bundle")
+			expected := newWebhook.DeepCopy()
+
+			Expect(mergeValidatingWebhookConfiguration(s, old, newWebhook)).NotTo(HaveOccurred(), "merge should be successful")
+			Expect(newWebhook).To(Equal(expected))
+		})
+
+		It("should preserve runtime failurePolicy when caBundle is populated and desired failurePolicy is Ignore", func() {
+			failPolicy := admissionregistrationv1.Fail
+			ignorePolicy := admissionregistrationv1.Ignore
+			old.Webhooks[0].FailurePolicy = &failPolicy
+			newWebhook.Webhooks[0].FailurePolicy = &ignorePolicy
+
+			expected := old.DeepCopy()
+
+			Expect(mergeValidatingWebhookConfiguration(s, old, newWebhook)).NotTo(HaveOccurred(), "merge should be successful")
+			Expect(newWebhook).To(Equal(expected))
+		})
 	})
 })
 

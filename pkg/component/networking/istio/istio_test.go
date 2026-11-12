@@ -116,8 +116,18 @@ var _ = Describe("istiod", func() {
 			return string(data)
 		}
 
+		istiodMutatingWebhook = func() string {
+			data, _ := os.ReadFile("./test_charts/istiod_mutatingwebhook.yaml")
+			return string(data)
+		}
+
 		istiodConfigMap = func() string {
 			data, _ := os.ReadFile("./test_charts/istiod_configmap.yaml")
+			return string(data)
+		}
+
+		istiodSidecarInjectorConfigMap = func() string {
+			data, _ := os.ReadFile("./test_charts/istiod_sidecar_injector_configmap.yaml")
 			return string(data)
 		}
 
@@ -438,6 +448,7 @@ var _ = Describe("istiod", func() {
 
 			expectedIstioSystemManifests := []string{
 				istiodConfigMap(),
+				istiodSidecarInjectorConfigMap(),
 				istiodDeployment("1cb4501d4e8d2a8849d21c2aa5e0910c3ea03818bd9b322082fd9c6a8605f097"),
 				istiodService(),
 				istioClusterRole(0),
@@ -451,6 +462,7 @@ var _ = Describe("istiod", func() {
 				istiodServiceAccount(),
 				istiodAutoscale(),
 				istiodValidationWebhook(),
+				istiodMutatingWebhook(),
 				istiodServiceMonitor(),
 			}
 

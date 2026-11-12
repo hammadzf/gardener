@@ -85,6 +85,8 @@ type IstiodValues struct {
 	Namespace string
 	// Image is the image used for the `istiod` deployment.
 	Image string
+	// ProxyImage is the image used for the injected `istio-proxy` sidecars.
+	ProxyImage string
 	// PriorityClassName is the name of the priority class used for the Istiod deployment.
 	PriorityClassName string
 	// TrustDomain is the domain used for service discovery, e.g. `cluster.local`.
@@ -418,6 +420,11 @@ func (i *istiod) GetValues() Values {
 }
 
 func (i *istiod) generateIstiodChart() (*chartrenderer.RenderedChart, error) {
+	proxyImage := i.values.Istiod.ProxyImage
+	if proxyImage == "" && len(i.values.IngressGateway) > 0 {
+		proxyImage = i.values.IngressGateway[0].Image
+	}
+
 	return i.chartRenderer.RenderEmbeddedFS(chartIstiod, chartPathIstiod, releaseName, i.values.Istiod.Namespace, map[string]any{
 		"serviceName":       IstiodServiceName,
 		"trustDomain":       i.values.Istiod.TrustDomain,
@@ -430,8 +437,9 @@ func (i *istiod) generateIstiodChart() (*chartrenderer.RenderedChart, error) {
 		"portsNames": map[string]any{
 			"metrics": istiodServicePortNameMetrics,
 		},
-		"image":     i.values.Istiod.Image,
-		"dualStack": i.values.Istiod.DualStack,
+		"image":      i.values.Istiod.Image,
+		"proxyImage": proxyImage,
+		"dualStack":  i.values.Istiod.DualStack,
 	})
 }
 

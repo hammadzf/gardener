@@ -123,6 +123,7 @@ func NewIstio(
 			Istiod: istio.IstiodValues{
 				Enabled:           istiodEnabled,
 				Image:             istiodImage.String(),
+				ProxyImage:        igwImage.String(),
 				Namespace:         v1beta1constants.IstioSystemNamespace,
 				PriorityClassName: priorityClassName,
 				TrustDomain:       gardencorev1beta1.DefaultDomain,

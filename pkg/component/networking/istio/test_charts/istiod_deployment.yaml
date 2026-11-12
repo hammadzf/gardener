@@ -76,6 +76,8 @@ spec:
             value: "default"
           - name: PILOT_CERT_PROVIDER
             value: istiod
+          - name: INJECTION_WEBHOOK_CONFIG_NAME
+            value: "istio-sidecar-injector"
           - name: POD_NAME
             valueFrom:
               fieldRef:
@@ -147,6 +149,9 @@ spec:
           - name: istio-csr-ca-configmap
             mountPath: /var/run/secrets/istiod/ca
             readOnly: true
+          - name: inject
+            mountPath: /var/lib/istio/inject
+            readOnly: true
       volumes:
       # Technically not needed on this pod - but it helps debugging/testing SDS
       # Should be removed after everything works.
@@ -177,6 +182,10 @@ spec:
         configMap:
           name: istio-ca-root-cert
           defaultMode: 420
+          optional: true
+      - name: inject
+        configMap:
+          name: istio-sidecar-injector
           optional: true
       priorityClassName: gardener-system-critical
       affinity:

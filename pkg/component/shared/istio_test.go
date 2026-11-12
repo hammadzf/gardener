@@ -117,6 +117,7 @@ func checkIstio(istioDeploy istio.Interface, testValues istioTestValues) {
 		Istiod: istio.IstiodValues{
 			Enabled:           testValues.istiodEnabled,
 			Image:             testValues.istiodImageName,
+			ProxyImage:        testValues.ingressImageName,
 			Namespace:         "istio-system",
 			PriorityClassName: testValues.priorityClassName,
 			TrustDomain:       "cluster.local",
