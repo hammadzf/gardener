@@ -205,6 +205,7 @@ var _ = Describe("GardenerAPIServer", func() {
 				Name:      "gardener-apiserver",
 				Namespace: namespace,
 				Annotations: map[string]string{
+					"networking.istio.io/exportTo":                                                     ".",
 					"networking.resources.gardener.cloud/from-all-webhook-targets-allowed-ports":       `[{"protocol":"TCP","port":8443}]`,
 					"networking.resources.gardener.cloud/from-all-garden-scrape-targets-allowed-ports": `[{"protocol":"TCP","port":8443}]`,
 				},
@@ -308,14 +309,18 @@ var _ = Describe("GardenerAPIServer", func() {
 						Labels: map[string]string{
 							"app":                              "gardener",
 							"role":                             "apiserver",
+							"sidecar.istio.io/inject":          "true",
 							"networking.gardener.cloud/to-dns": "allowed",
 							"networking.gardener.cloud/to-private-networks":                                   "allowed",
 							"networking.gardener.cloud/to-public-networks":                                    "allowed",
 							"networking.resources.gardener.cloud/to-all-webhook-targets":                      "allowed",
+							"networking.resources.gardener.cloud/to-istio-system-istiod-tcp-15012":            "allowed",
 							"networking.resources.gardener.cloud/to-virtual-garden-etcd-main-client-tcp-2379": "allowed",
 							"networking.resources.gardener.cloud/to-virtual-garden-kube-apiserver-tcp-443":    "allowed",
 						},
 						Annotations: map[string]string{
+							"proxy.istio.io/config":                                 "holdApplicationUntilProxyStarts: true\n",
+							"traffic.sidecar.istio.io/excludeInboundPorts":          "15021,15090",
 							"reference.resources.gardener.cloud/configmap-1b2d9b42": "gardener-apiserver-audit-policy-config-1e270362",
 							"reference.resources.gardener.cloud/configmap-6e5f123b": "gardener-apiserver-admission-config-07c5248a",
 							"reference.resources.gardener.cloud/secret-6f6e15a3":    "garden-access-gardener-apiserver",

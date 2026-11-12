@@ -42,6 +42,7 @@ import (
 	fakeclient "sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
 	"github.com/gardener/gardener/pkg/client/kubernetes"
 	fakekubernetes "github.com/gardener/gardener/pkg/client/kubernetes/fake"
@@ -2598,6 +2599,30 @@ kind: AuthorizationConfiguration
 						"networking.resources.gardener.cloud/to-vpn-seed-server-1-tcp-1194": "allowed",
 					})))
 				})
+
+				It("should have the expected pod template labels when name prefix is provided (virtual garden)", func() {
+					kapi = New(kubernetesInterface, namespace, sm, Values{
+						Values: apiserver.Values{
+							RuntimeVersion: runtimeVersion,
+						},
+						IsWorkerless: true,
+						Version:      version,
+						NamePrefix:   "virtual-garden-",
+					})
+					deployment = &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "virtual-garden-" + v1beta1constants.DeploymentNameKubeAPIServer, Namespace: namespace}}
+					deployAndRead()
+
+					expectedLabels := utils.MergeStringMaps(defaultLabels, map[string]string{
+						"sidecar.istio.io/inject":                                                            "true",
+						"networking.resources.gardener.cloud/to-istio-system-istiod-tcp-15012":               "allowed",
+						"networking.resources.gardener.cloud/to-virtual-garden-etcd-main-client-tcp-2379":   "allowed",
+						"networking.resources.gardener.cloud/to-virtual-garden-etcd-events-client-tcp-2379": "allowed",
+					})
+					delete(expectedLabels, "networking.resources.gardener.cloud/to-etcd-main-client-tcp-2379")
+					delete(expectedLabels, "networking.resources.gardener.cloud/to-etcd-events-client-tcp-2379")
+
+					Expect(deployment.Spec.Template.Labels).To(Equal(expectedLabels))
+				})
 			})
 
 			Context("expected pod template annotations", func() {
@@ -2742,6 +2767,25 @@ kind: AuthorizationConfiguration
 						"reference.resources.gardener.cloud/secret-a41fe9a3":    secretNameVPNSeedClient,
 						"reference.resources.gardener.cloud/secret-facfe649":    secretNameVPNSeedServerTLSAuth,
 						"reference.resources.gardener.cloud/configmap-a9a818ab": "kube-root-ca.crt",
+						"reference.resources.gardener.cloud/configmap-c413f07d": configMapNameAuthorizationConfigWorkerless,
+					})))
+				})
+
+				It("should have the expected annotations when name prefix is provided (virtual garden)", func() {
+					kapi = New(kubernetesInterface, namespace, sm, Values{
+						Values: apiserver.Values{
+							RuntimeVersion: runtimeVersion,
+						},
+						IsWorkerless: true,
+						Version:      version,
+						NamePrefix:   "virtual-garden-",
+					})
+					deployment = &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "virtual-garden-" + v1beta1constants.DeploymentNameKubeAPIServer, Namespace: namespace}}
+					deployAndRead()
+
+					Expect(deployment.Spec.Template.Annotations).To(Equal(utils.MergeStringMaps(defaultAnnotations, map[string]string{
+						"proxy.istio.io/config":                                 "holdApplicationUntilProxyStarts: true\n",
+						"traffic.sidecar.istio.io/excludeInboundPorts":          "15021,15090",
 						"reference.resources.gardener.cloud/configmap-c413f07d": configMapNameAuthorizationConfigWorkerless,
 					})))
 				})

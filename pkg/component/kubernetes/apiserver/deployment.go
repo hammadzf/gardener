@@ -187,6 +187,27 @@ func (k *kubeAPIServer) reconcileDeployment(
 			resourcesv1alpha1.HighAvailabilityConfigType:                        resourcesv1alpha1.HighAvailabilityConfigTypeServer,
 			v1beta1constants.LabelExtensionProviderMutatedByControlplaneWebhook: "true",
 		})
+
+		podLabels := map[string]string{
+			v1beta1constants.LabelNetworkPolicyToDNS:                                                      v1beta1constants.LabelNetworkPolicyAllowed,
+			v1beta1constants.LabelNetworkPolicyToPublicNetworks:                                           v1beta1constants.LabelNetworkPolicyAllowed,
+			v1beta1constants.LabelNetworkPolicyToPrivateNetworks:                                          v1beta1constants.LabelNetworkPolicyAllowed,
+			"networking.resources.gardener.cloud/to-" + v1beta1constants.LabelNetworkPolicyWebhookTargets: v1beta1constants.LabelNetworkPolicyAllowed,
+			"networking.resources.gardener.cloud/to-" + v1beta1constants.LabelNetworkPolicyExtensionsNamespaceAlias + "-" + v1beta1constants.LabelNetworkPolicyWebhookTargets: v1beta1constants.LabelNetworkPolicyAllowed,
+			gardenerutils.NetworkPolicyLabel(k.values.NamePrefix+etcdconstants.ServiceName(v1beta1constants.ETCDRoleMain), etcdconstants.PortEtcdClient):                      v1beta1constants.LabelNetworkPolicyAllowed,
+			gardenerutils.NetworkPolicyLabel(k.values.NamePrefix+etcdconstants.ServiceName(v1beta1constants.ETCDRoleEvents), etcdconstants.PortEtcdClient):                    v1beta1constants.LabelNetworkPolicyAllowed,
+		}
+
+		var podAnnotations map[string]string
+		if k.values.NamePrefix != "" {
+			podLabels["sidecar.istio.io/inject"] = "true"
+			podLabels[gardenerutils.NetworkPolicyLabel(v1beta1constants.IstioSystemNamespace+"-istiod", 15012)] = v1beta1constants.LabelNetworkPolicyAllowed
+			podAnnotations = map[string]string{
+				"proxy.istio.io/config":                        "holdApplicationUntilProxyStarts: true\n",
+				"traffic.sidecar.istio.io/excludeInboundPorts": "15021,15090",
+			}
+		}
+
 		deployment.Spec = appsv1.DeploymentSpec{
 			MinReadySeconds:      30,
 			RevisionHistoryLimit: new(int32(2)),
@@ -201,15 +222,8 @@ func (k *kubeAPIServer) reconcileDeployment(
 			},
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
-					Labels: utils.MergeStringMaps(GetLabels(), map[string]string{
-						v1beta1constants.LabelNetworkPolicyToDNS:                                                      v1beta1constants.LabelNetworkPolicyAllowed,
-						v1beta1constants.LabelNetworkPolicyToPublicNetworks:                                           v1beta1constants.LabelNetworkPolicyAllowed,
-						v1beta1constants.LabelNetworkPolicyToPrivateNetworks:                                          v1beta1constants.LabelNetworkPolicyAllowed,
-						"networking.resources.gardener.cloud/to-" + v1beta1constants.LabelNetworkPolicyWebhookTargets: v1beta1constants.LabelNetworkPolicyAllowed,
-						"networking.resources.gardener.cloud/to-" + v1beta1constants.LabelNetworkPolicyExtensionsNamespaceAlias + "-" + v1beta1constants.LabelNetworkPolicyWebhookTargets: v1beta1constants.LabelNetworkPolicyAllowed,
-						gardenerutils.NetworkPolicyLabel(k.values.NamePrefix+etcdconstants.ServiceName(v1beta1constants.ETCDRoleMain), etcdconstants.PortEtcdClient):                      v1beta1constants.LabelNetworkPolicyAllowed,
-						gardenerutils.NetworkPolicyLabel(k.values.NamePrefix+etcdconstants.ServiceName(v1beta1constants.ETCDRoleEvents), etcdconstants.PortEtcdClient):                    v1beta1constants.LabelNetworkPolicyAllowed,
-					}),
+					Labels:      utils.MergeStringMaps(GetLabels(), podLabels),
+					Annotations: podAnnotations,
 				},
 				Spec: corev1.PodSpec{
 					AutomountServiceAccountToken:  new(false),

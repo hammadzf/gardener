@@ -328,7 +328,7 @@ func (r *Reconciler) reconcile(
 		deployKubeAPIServer = g.Add(flow.Task{
 			Name:         "Deploying Kubernetes API Server",
 			Fn:           r.deployKubeAPIServerFunc(garden, c.kubeAPIServer),
-			Dependencies: flow.NewTaskIDs(waitUntilEtcdsReady, waitUntilExtensionResourcesBeforeKAPIReady),
+			Dependencies: flow.NewTaskIDs(waitUntilEtcdsReady, waitUntilExtensionResourcesBeforeKAPIReady, deployKubeAPIServerService),
 		})
 		waitUntilKubeAPIServerIsReady = g.Add(flow.Task{
 			Name:         "Waiting until Kubernetes API server rolled out",

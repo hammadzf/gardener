@@ -661,7 +661,7 @@ func (r *Reconciler) newKubeAPIServerServiceWithSuffix(log logr.Logger, garden *
 		nil,
 		nil,
 		func() []string {
-			return []string{operatorv1alpha1.VirtualGardenNamePrefix + v1beta1constants.DefaultSNIIngressNamespace}
+			return []string{operatorv1alpha1.VirtualGardenNamePrefix + v1beta1constants.DefaultSNIIngressNamespace, "."}
 		},
 	)
 }

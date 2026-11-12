@@ -5,6 +5,7 @@
 package apiserver
 
 import (
+	istioapiannotation "istio.io/api/annotation"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,6 +24,7 @@ func (g *gardenerAPIServer) serviceRuntime() *corev1.Service {
 	service := g.service()
 	service.Namespace = g.namespace
 
+	metav1.SetMetaDataAnnotation(&service.ObjectMeta, istioapiannotation.NetworkingExportTo.Name, ".")
 	gardenerutils.ReconcileTopologyAwareRoutingSettings(service, g.values.TopologyAwareRoutingEnabled, g.values.RuntimeVersion)
 	// allow gardener-apiserver being reached from kube-apiserver
 	utilruntime.Must(gardenerutils.InjectNetworkPolicyAnnotationsForWebhookTargets(service, networkingv1.NetworkPolicyPort{
